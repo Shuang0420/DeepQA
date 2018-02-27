@@ -106,6 +106,8 @@ class Chatbot:
         globalArgs.add_argument('--autoEncode', action='store_true', help='Randomly pick the question or the answer and use it both as input and output')
         globalArgs.add_argument('--device', type=str, default=None, help='\'gpu\' or \'cpu\' (Warning: make sure you have enough free RAM), allow to choose on which hardware run the model')
         globalArgs.add_argument('--seed', type=int, default=None, help='random seed for replication')
+        globalArgs.add_argument('--beamSearch', action='store_true', help='beam search in test')
+        globalArgs.add_argument('--beamSize', type=int, default=3, help='beam search Size')
 
         # Dataset options
         datasetArgs = parser.add_argument_group('Dataset options')
@@ -124,7 +126,7 @@ class Chatbot:
         nnArgs.add_argument('--softmaxSamples', type=int, default=0, help='Number of samples in the sampled softmax loss function. A value of 0 deactivates sampled softmax')
         nnArgs.add_argument('--initEmbeddings', action='store_true', help='if present, the program will initialize the embeddings with pre-trained word2vec vectors')
         nnArgs.add_argument('--embeddingSize', type=int, default=64, help='embedding size of the word representation')
-        nnArgs.add_argument('--embeddingSource', type=str, default="GoogleNews-vectors-negative300.bin", help='embedding file to use for the word representation')
+        nnArgs.add_argument('--embeddingSource', type=str, default="news_12g_baidubaike_20g_novel_90g_embedding_64.bin", help='embedding file to use for the word representation')
 
         # Training options
         trainingArgs = parser.add_argument_group('Training options')
@@ -299,15 +301,31 @@ class Chatbot:
                 for line in tqdm(lines, desc='Sentences'):
                     question = line[:-1]  # Remove the endl character
 
-                    answer = self.singlePredict(question)
-                    if not answer:
-                        nbIgnored += 1
-                        continue  # Back to the beginning, try again
 
-                    predString = '{x[0]}{0}\n{x[1]}{1}\n\n'.format(question, self.textData.sequence2str(answer, clean=True), x=self.SENTENCES_PREFIX)
-                    if self.args.verbose:
-                        tqdm.write(predString)
-                    f.write(predString)
+                    # add beam search
+                    if self.args.beamSearch:
+                        answers = self.beamSearchPredict(question)
+                        if not answers:
+                            nbIgnored += 1
+                            continue
+                        predString = '{}{}\n'.format(self.SENTENCES_PREFIX[0], question)
+                        f.write(predString)
+                        for ans in reversed(answers):
+                            predString = '{}{}\n'.format(self.SENTENCES_PREFIX[1], self.textData.sequence2str(answer, clean=True))
+                            f.write(predString)
+                        f.write('\n')
+
+
+                    else:
+                        answer = self.singlePredict(question)
+                        if not answer:
+                            nbIgnored += 1
+                            continue  # Back to the beginning, try again
+
+                        predString = '{x[0]}{0}\n{x[1]}{1}\n\n'.format(question, self.textData.sequence2str(answer, clean=True), x=self.SENTENCES_PREFIX)
+                        if self.args.verbose:
+                            tqdm.write(predString)
+                        f.write(predString)
                 print('Prediction finished, {}/{} sentences ignored (too long)'.format(nbIgnored, len(lines)))
 
     def mainTestInteractive(self, sess):
@@ -330,12 +348,24 @@ class Chatbot:
                 break
 
             questionSeq = []  # Will be contain the question as seen by the encoder
-            answer = self.singlePredict(question, questionSeq)
-            if not answer:
-                print('Warning: sentence too long, sorry. Maybe try a simpler sentence.')
-                continue  # Back to the beginning, try again
 
-            print('{}{}'.format(self.SENTENCES_PREFIX[1], self.textData.sequence2str(answer, clean=True)))
+            # add beam search
+            if self.args.beamSearch:
+                answers = self.beamSearchPredict(question)
+                if not answers:
+                    print('Warning: sentence too long, sorry. Maybe try a simpler sentence.')
+                    continue
+                for ans in reversed(answers):
+                    print('{}{}'.format(str(self.SENTENCES_PREFIX[1]),
+                                        self.textData.sequence2str(answer, clean=True)))
+
+            else:
+                answer = self.singlePredict(question, questionSeq)
+                if not answer:
+                    print('Warning: sentence too long, sorry. Maybe try a simpler sentence.')
+                    continue  # Back to the beginning, try again
+
+                print('{}{}'.format(self.SENTENCES_PREFIX[1], self.textData.sequence2str(answer, clean=True)))
 
             if self.args.verbose:
                 print(self.textData.batchSeq2str(questionSeq, clean=True, reverse=True))
@@ -364,6 +394,56 @@ class Chatbot:
         answer = self.textData.deco2sentence(output)
 
         return answer
+
+
+    def beamSearchPredict(self, question, questionSeq=None):
+
+        # Create the input batch
+        batch = self.textData.sentence2enco(question)
+
+        if not batch:
+            return None
+        if questionSeq is not None:  # If the caller want to have the real input
+            questionSeq.extend(batch.encoderSeqs)
+
+        # Run the model
+        ops, feedDict = self.model.step(batch)
+
+        def softmax(x):
+            return np.exp(x) / np.sum(np.exp(x), axis=0)
+
+        beam_size = self.args.beam_size
+        path = [[] for _ in range(beam_size)]
+        probs = [[] for _ in range(beam_size)]
+
+        output = self.sess.run(ops[0][0], feedDict)
+        for k in range(len(path)):
+            prob = softmax(output[-1].reshape(-1, ))
+            log_probs = np.log(np.clip(a=prob, a_min=1e-5, a_max=1))
+            top_k_indexs = np.argsort(log_probs)[-beam_size:]
+            path[k].extend([top_k_indexs[k]])
+            probs[k].extend([log_probs[top_k_indexs[k]]])
+
+        for i in range(2, self.args.maxLengthDeco):
+            tmp = []
+            for k in range(len(path)):
+                for j in range(len(path[k])):
+                    feedDict[self.model.decoderInputs[j + 1]] = [path[k][j]]
+                output = self.sess.run(ops[0][0:i], feedDict)
+                prob = softmax(output[-1].reshape(-1, ))
+                log_probs = np.log(np.clip(a=prob, a_min=1e-5, a_max=1))
+                tmp.extend(list(log_probs + probs[k][-1]))
+
+            top_k_indexs = np.argsort(tmp)[-beam_size:]
+            indexs = top_k_indexs % self.textData.getVocabularySize()
+
+            for k in range(len(path)):
+                probs[k].extend([tmp[top_k_indexs[k]]])
+                path[k].extend([indexs[k]])
+        return path
+
+
+
 
     def daemonPredict(self, sentence):
         """ Return the answer to a given sentence (same as singlePredict() but with additional cleaning)
@@ -466,7 +546,7 @@ class Chatbot:
             sess: The current running session
         """
 
-        print('WARNING: ', end='')
+        #print('WARNING: ', end='')
 
         modelName = self._getModelName()
 

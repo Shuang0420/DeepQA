@@ -18,7 +18,7 @@ Loads the dialogue corpus, builds the vocabulary
 """
 
 import numpy as np
-import nltk  # For tokenize
+# import nltk  # For tokenize
 from tqdm import tqdm  # Progress bar
 import pickle  # Saving the data
 import math  # For float comparison
@@ -26,12 +26,16 @@ import os  # Checking file existance
 import random
 import string
 import collections
+import jieba
 
 from chatbot.corpus.cornelldata import CornellData
 from chatbot.corpus.opensubsdata import OpensubsData
 from chatbot.corpus.scotusdata import ScotusData
 from chatbot.corpus.ubuntudata import UbuntuData
+from chatbot.corpus.xhjdata import XhjData
+from chatbot.corpus.wechatdata import WechatData
 from chatbot.corpus.lightweightdata import LightweightData
+from chatbot.corpus.otherdata import OtherData
 
 
 class Batch:
@@ -55,6 +59,9 @@ class TextData:
         ('scotus', ScotusData),
         ('ubuntu', UbuntuData),
         ('lightweight', LightweightData),
+        ('xiaohuangji', XhjData),
+        ('wechat', WechatData),
+        ('other', OtherData)
     ])
 
     @staticmethod
@@ -465,19 +472,26 @@ class TextData:
         """
         sentences = []  # List[List[str]]
 
-        # Extract sentences
-        sentencesToken = nltk.sent_tokenize(line)
+        if self.args.corpus == 'xiaohuangji' or self.args.corpus == 'wechat' or self.args.corpus == 'other':
+            for i in range(len(line)):
+                if len(line[i])>0:
+                    sentences.append([])
+                    for j in range(len(line[i])):
+                        sentences[-1].append(self.getWordId(line[i][j]))
 
-        # We add sentence by sentence until we reach the maximum length
-        for i in range(len(sentencesToken)):
-            tokens = nltk.word_tokenize(sentencesToken[i])
+        else:
+            # Extract sentences
+            sentencesToken = nltk.sent_tokenize(line)
 
-            tempWords = []
-            for token in tokens:
-                tempWords.append(self.getWordId(token))  # Create the vocabulary and the training sentences
+            # We add sentence by sentence until we reach the maximum length
+            for i in range(len(sentencesToken)):
+                tokens = nltk.word_tokenize(sentencesToken[i])
 
-            sentences.append(tempWords)
+                tempWords = []
+                for token in tokens:
+                    tempWords.append(self.getWordId(token))  # Create the vocabulary and the training sentences
 
+                sentences.append(tempWords)
         return sentences
 
     def getWordId(self, word, create=True):
@@ -588,7 +602,10 @@ class TextData:
             return None
 
         # First step: Divide the sentence in token
-        tokens = nltk.word_tokenize(sentence)
+        # For Chinese input
+        tokens = list(jieba.cut(sentence, cut_all=False))
+        # For English input
+        # tokens = nltk.word_tokenize(sentence)
         if len(tokens) > self.args.maxLength:
             return None
 
