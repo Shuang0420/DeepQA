@@ -2,7 +2,7 @@
 
 Fork from [Conchylicultor/DeepQA](https://github.com/Conchylicultor/DeepQA)
 
-# New features:
+# New features
 - support Chinese
 - support attention
 - support beam search
