@@ -10,7 +10,7 @@ Build the DeepQA Chinese version package
 
 from setuptools import setup, find_packages
 
-VERSION = 0.1.0
+VERSION = "0.1.0"
 
 setup_args = dict( name="deepqa",
                    version=VERSION,
@@ -39,7 +39,6 @@ setup_args = dict( name="deepqa",
                                         ],
 
                     packages = find_packages(),
-
 
                    include_package_data = False,       # otherwise package_data is not used
                    )
