@@ -1,3 +1,13 @@
+
+
+Fork from [Conchylicultor/DeepQA](https://github.com/Conchylicultor/DeepQA)
+
+New features:
+- support Chinese
+- support attention
+- support beam search
+
+
 # Deep Q&A
 [![Join the chat at https://gitter.im/chatbot-pilots/DeepQA](https://badges.gitter.im/chatbot-pilots/DeepQA.svg)](https://gitter.im/chatbot-pilots/DeepQA?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
